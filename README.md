@@ -1,37 +1,52 @@
-﻿# 代码写的太烂了，得重写一遍
-# 已经重新写完了
-
-
- ## 核心特性
- - **人机回环 (HITL) 安检机制**
-   - 绝不盲目发送邮件！在执行写信、预定会议等敏感操作前，通过 LangGraph 的 `interrupt` 机制挂起工作流。
-   - 提供交互式“智能收件箱”，允许用户预览、修改 AI 草稿，确保 100% 的操作安全性。
-- **动态记忆与偏好管理 (Long-term Memory)**
-  - 基于 `InMemoryStore` 与本地 JSON 持久化构建档案库。
-  - Agent 能够从用户（如：手动修改草稿、拒绝特定会议）的历史反馈中，自动总结并更新写作风格与日程偏好，实现“越用越懂你”。
-- **复杂图工作流 (StateGraph)**
-  - 实现了 `邮件分拣 -> 人工审核 -> 草稿生成 -> 记忆更新 -> 自动执行` 的完整闭环状态机。
-
-## 项目架构 (Architecture)
-
+## 项目简介
+本项目是一个基于 LangGraph 开发的智能邮箱助手，旨在通过 LLM 自动化处理 163 邮箱事务。系统集成了长期记忆管理与飞书推送功能，实现了从邮件分类、回复草拟到多端协同的全流程自动化。
+## 核心功能
+- 智能邮件处理：利用 LangGraph 构建工作流，自动识别邮件紧急程度与意图。
+- 多工具调用 (Tools)：集成 163 邮箱底层协议，支持自动读取、搜索及撰写邮件。
+- 长期记忆 (Memory)：通过 memory.py 实现用户偏好记忆，使 Agent 能够根据历史交互习惯生成更精准的回复。
+- 人机回环控制 (Human-in-the-loop)：通过 LangGraph 的 interrupt 机制实现。在 Agent 执行高风险操作（如：发送正式回复邮件）前，系统会自动挂起并推送到飞书端等待人工审核，确保回复的准确性与合规性。
+## 项目架构 
 ```text
 ├── agents/             # Agent 核心逻辑
-│   ├── prompts.py      # 系统 Prompt（包含分拣、求职信生成、记忆提取）
-│   ├── tools.py        # 代理工具 (发送邮件、查询/安排日历等)
-│   └── tool_prompt.py  # 工具描述文件
-├── core/               # 底层框架支撑
-│   ├── apimodels.py    # 大模型接口初始化 (支持 GPT-4o / Gemini)
-│   ├── graph.py        # LangGraph 状态图定义与工作流编排
-│   ├── memory.py       # 长期记忆的读写与 JSON 持久化逻辑
-│   └── state.py        # 全局 State 结构定义设计 (Pydantic Models)
-├── Ingestion/          # 数据摄入模块 (RAG)
-│   ├── chroma_db/      # Chroma 本地向量数据库
-│   └── ingest_resume.py# 简历文档处理脚本 (支持 PDF/Docx，执行向量化切分)
-├── services/           # 外部服务集成
-│   └── email_163.py    # 163 IMAP 邮箱连接、拉取与 HTML 文本清洗
-├── text/               # 独立功能入口
-    └── job_hunter.py   # RAG 求职自荐信生成专线脚本
+│   ├── agent_prompt.py # 智能体提示词定义
+│   ├── memory_prompt.py# 记忆提取相关的提示词
+│   ├── tools.py        # LangGraph 使用的具体工具函数
+│   └── tool_prompt.py  # 工具调用相关的提示词
+├── core/               # 核心底层组件
+│   ├── gp.py           # 图(Graph)定义或核心流程
+│   ├── memory.py       # 长期/短期记忆管理
+│   ├── models.py       # LLM 模型实例化配置
+│   └── scheme.py       # 数据结构与 Schema 定义
+├── feishu/             # 飞书集成模块
+│   ├── feishu_tool.py  # 飞书 API 调用封装
+│   └── run.py          # 飞书端的启动入口
+├── utils/              # 通用工具类
+│   ├── email_163.py    # 163 邮箱收发底层逻辑
+│   └── helpers.py      # 辅助函数
+└── requirements.txt    # 项目依赖清单
+```
+## Graph工作流 (Workflow)
+```mermaid
+graph TD
+    START((开始)) --> TriageRouter[邮件智能分拣]
 
+    %% 分拣路由
+    TriageRouter -- 回复 --> ResponseAgent[生成回复草稿]
+    TriageRouter -- 通知 --> TriageInterrupt{中断 1: 飞书审核分类}
+    TriageRouter -- 忽略 --> END_NODE((结束))
+
+    %% 第一层中断处理
+    TriageInterrupt -- 要求回复 --> ResponseAgent
+    TriageInterrupt -- 已阅 / 忽略 --> END_NODE
+
+    %% 回复生成与第二层中断
+    ResponseAgent -- 尝试调用发信工具 --> InterruptHandler{中断 2: 飞书发送前审核}
+    ResponseAgent -- 流程结束 --> END_NODE
+
+    %% 第二层中断处理
+    InterruptHandler -- 打回重写  --> ResponseAgent
+    InterruptHandler -- 确认发送 / 手动修改 / 取消 --> END_NODE
+```
 
 
 
